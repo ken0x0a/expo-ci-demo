@@ -101,7 +101,7 @@ jobs: # a collection of steps
 
   # https://docs.expo.io/versions/latest/guides/setting-up-continuous-integration/
   release: # runs not using Workflows must have a `build` job as entry point
-    executor: nodejs
+    executor: expo-publisher
     environment:
       EXPO_RELEASE_CHANNEL: default
     steps: # a collection of executable commands
