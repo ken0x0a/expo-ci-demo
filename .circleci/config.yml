@@ -1,0 +1,155 @@
+# 
+# ## Refernces
+# 
+# https://docs.expo.io/versions/latest/guides/setting-up-continuous-integration/
+# https://circleci.com/docs/2.0/language-javascript/
+# https://circleci.com/docs/2.0/yarn/
+# https://hub.docker.com/r/circleci/node
+# https://circleci.com/docs/2.0/caching/#yarn-node
+# 
+# 
+# To validate this config, run the following command.
+# 
+# - `circleci config validate`
+# 
+
+
+version: 2.1 # use CircleCI 2.1
+
+resources:
+  workdir: &workdir ~/workdir
+
+# https://circleci.com/docs/2.0/configuration-reference/#executors-requires-version-21
+executors:
+  nodejs:
+    docker:
+      - image: circleci/node:12.8.0 # ...with this image as the primary container; this is where all `steps` will run
+    working_directory: *workdir # directory where steps will run
+  expo-publisher:
+    docker:
+      - image: ken0x0a/expo:3.0.10
+    working_directory: *workdir # directory where steps will run
+
+attach_workspace_step_alias: &attach_workspace_step_alias
+  attach_workspace:
+    at: *workdir
+
+jobs: # a collection of steps
+  install-dependencies:
+    executor: nodejs
+    steps:
+      # Check out source code to working directory
+      - checkout
+
+      # Restore the dependency cache
+      # https://circleci.com/docs/2.0/caching/#yarn-node
+      - restore_cache:
+          # name: Restore Yarn Package Cache
+          keys:
+            # Find the most recently generated cache used from any branch
+            # https://circleci.com/docs/2.0/caching/#restoring-cache
+            - yarn-packages-v1-{{ .Branch }}-{{ checksum "yarn.lock" }}
+            - yarn-packages-v1-{{ .Branch }}-
+            - yarn-packages-v1-
+      - run:
+          name: Install Dependencies
+          # `--frozen-lockfile` https://yarnpkg.com/lang/en/docs/cli/install/
+          # command: yarn install --frozen-lockfile
+          command: yarn install
+      - save_cache:
+          # name: Save Yarn Package Cache
+          key: yarn-packages-v1-{{ .Branch }}-{{ checksum "yarn.lock" }}
+          paths:
+            - ~/.cache/yarn
+      - persist_to_workspace:
+          root: .
+          paths: 
+            - .
+
+  typecheck:
+    executor: nodejs
+    steps:
+      - *attach_workspace_step_alias
+      # 
+      # Type Check
+      # 
+      - run: # type check
+          name: type check
+          command: yarn run ci:type-check
+
+  lint:
+    executor: nodejs
+    steps:
+      - *attach_workspace_step_alias
+      # 
+      # Lint
+      # 
+      - restore_cache:
+          # name: Restore Yarn Package Cache
+          keys:
+            - eslint-{{ .Branch }}-{{ checksum ".eslintcache" }}
+            - eslint-{{ .Branch }}-
+            - eslint-
+      - run: # run lint
+          name: lint
+          command: yarn run lint
+      - save_cache:
+          # name: Save ESlint Cache
+          key: eslint-{{ .Branch }}-{{ checksum ".eslintcache" }}
+          paths:
+            - .eslintcache
+
+  # https://docs.expo.io/versions/latest/guides/setting-up-continuous-integration/
+  release: # runs not using Workflows must have a `build` job as entry point
+    executor: nodejs
+    environment:
+      EXPO_RELEASE_CHANNEL: default
+    steps: # a collection of executable commands
+      - *attach_workspace_step_alias
+
+      # 
+      # ======  Release  ======
+      # 
+      - run:
+          name: Login into Expo
+          command: expo login -u $EXPO_USERNAME -p $EXPO_PASSWORD
+
+      - run:
+          name: Publish to Expo
+          command: expo publish --non-interactive --max-workers 1 --release-channel $EXPO_RELEASE_CHANNEL
+      # - run: # run tests
+      #     name: test
+      #     command: yarn test
+      # - run: # run coverage report
+      #     name: code-coverage
+      #     command: './node_modules/.bin/nyc report --reporter=text-lcov'
+      # - store_artifacts: # special step to save test results as as artifact
+      #     # Upload test summary for display in Artifacts: https://circleci.com/docs/2.0/artifacts/ 
+      #     path: test-results.xml
+      #     prefix: tests
+      # - store_artifacts: # for display in Artifacts: https://circleci.com/docs/2.0/artifacts/ 
+      #     path: coverage
+      #     prefix: coverage
+      # - store_test_results: # for display in Test Summary: https://circleci.com/docs/2.0/collect-test-data/
+      #     path: test-results.xml
+      # See https://circleci.com/docs/2.0/deployment-integrations/ for deploy examples
+
+# https://circleci.com/docs/2.0/workflows/#branch-level-job-execution
+workflows:
+  version: 2
+  build-test-release:
+    jobs:
+      - install-dependencies
+      - typecheck:
+          requires:
+            - install-dependencies
+      # - lint:
+      #     requires:
+      #       - install-dependencies
+      - release:
+          filters:  # using regex filters requires the entire branch to match
+            branches:
+              only: master
+          requires:
+            - typecheck
+          #   - lint
